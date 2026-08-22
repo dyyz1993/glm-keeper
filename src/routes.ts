@@ -191,13 +191,16 @@ export async function routes(app: FastifyInstance): Promise<void> {
     }
   );
 
-  /** 批量切换 2FA（只处理有有效 token 的账号） */
-  app.post<{ Body: { enable: boolean } }>('/api/twofa/batch', async (request) => {
+  /** 批量切换 2FA（ids 省略=全部；只处理有有效 token 的账号） */
+  app.post<{ Body: { enable: boolean; ids?: string[] } }>('/api/twofa/batch', async (request) => {
     const enable = request.body?.enable === true;
+    const targets = request.body?.ids?.length
+      ? request.body.ids.map((id) => accountStore.get(id)).filter((a): a is NonNullable<typeof a> => !!a)
+      : accountStore.list();
     let ok = 0;
     let fail = 0;
     const errors: string[] = [];
-    for (const acc of accountStore.list()) {
+    for (const acc of targets) {
       let working: string | null = null;
       for (const cand of accountStore.tokenCandidates(acc.id)) {
         if ((await probeToken(cand)).ok) {

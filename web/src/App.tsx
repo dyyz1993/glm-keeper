@@ -3,6 +3,16 @@ import { api, type Account, type BatchStatus } from './api.js';
 
 const DAY = 86400_000;
 
+/** 批量 2FA（可限定 ids） */
+async function twofaBatch(enable: boolean, ids?: string[]) {
+  const res = await fetch('/api/twofa/batch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enable, ids }),
+  });
+  return res.json() as Promise<{ ok: number; fail: number; errors: string[] }>;
+}
+
 function fmt(ts: string | null): string {
   if (!ts) return '—';
   return new Date(ts).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
@@ -25,6 +35,7 @@ export default function App() {
   const [showImport, setShowImport] = useState(false);
   const [importText, setImportText] = useState('');
   const [msg, setMsg] = useState('');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const refresh = useCallback(async () => {
     try {
@@ -135,21 +146,32 @@ export default function App() {
     }
   };
 
-  /** 批量切换全部账号 2FA */
+  /** 批量切换全部账号 2FA（有选中时只作用于选中） */
   const doBatch2FA = async (enable: boolean) => {
+    const ids = selected.size > 0 ? [...selected] : undefined;
+    const scope = ids ? `选中 ${ids.length} 个` : '全部';
     try {
-      flash(enable ? '正在批量开启双重认证...' : '正在批量关闭双重认证...');
-      const res = await fetch('/api/twofa/batch', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enable }),
-      });
-      const r = await res.json();
-      flash(`2FA 批量${enable ? '开启' : '关闭'}：成功 ${r.ok}，失败 ${r.fail}${r.errors?.length ? `（如 ${r.errors[0]}）` : ''}`);
+      flash(`正在${scope}${enable ? '开启' : '关闭'}双重认证...`);
+      const r = await twofaBatch(enable, ids);
+      flash(`2FA ${scope}${enable ? '开启' : '关闭'}：成功 ${r.ok}，失败 ${r.fail}${r.errors?.length ? `（如 ${r.errors[0]}）` : ''}`);
       refresh();
     } catch (err) {
       flash((err as Error).message);
     }
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const allSelected = accounts.length > 0 && accounts.every((a) => selected.has(a.id));
+  const toggleSelectAll = () => {
+    setSelected(allSelected ? new Set() : new Set(accounts.map((a) => a.id)));
   };
 
   /** 登录态采集留痕：读所有 profile（含 browser-manager）的 token 存档 */
@@ -202,13 +224,13 @@ export default function App() {
             <button
               onClick={() => doBatch2FA(true)}
               className="rounded-md border border-blue-300 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-50"
-              title="批量开启全部账号的双重认证（闲置保险，HTTP 秒级）"
-            >🔒 全部开2FA</button>
+              title={selected.size > 0 ? `开启选中 ${selected.size} 个账号的双重认证` : '批量开启全部账号的双重认证（闲置保险，HTTP 秒级）'}
+            >🔒 {selected.size > 0 ? `选中开2FA(${selected.size})` : '全部开2FA'}</button>
             <button
-              onClick={() => { if (confirm('确定批量关闭全部双重认证？关闭期间账号仅靠密码保护')) doBatch2FA(false); }}
+              onClick={() => { if (confirm(`确定${selected.size > 0 ? `关闭选中 ${selected.size} 个` : '批量关闭全部'}双重认证？关闭期间账号仅靠密码保护`)) doBatch2FA(false); }}
               className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50"
               title="批量关闭（仅在需要批量重登前使用）"
-            >🔓 全部关2FA</button>
+            >🔓 {selected.size > 0 ? `选中关2FA(${selected.size})` : '全部关2FA'}</button>
             <button onClick={doHarvest} className="rounded-md border border-orange-300 px-3 py-1.5 text-xs font-medium text-orange-700 hover:bg-orange-50" title="读取所有 profile（含 browser-manager）里的 token 存档留痕，免登录无滑块">🍯 采集登录态</button>
             <button onClick={doExportSupport} className="rounded-md border border-amber-300 px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50" title="导出全部账号状态/token/流程日志/操作日志（含秘密，勿外传）">📦 导出诊断包</button>
           </div>
@@ -249,11 +271,46 @@ export default function App() {
           </div>
         )}
 
+        {/* 选中操作栏 */}
+        {selected.size > 0 && (
+          <div className="mb-3 flex items-center gap-3 rounded-lg border border-indigo-300 bg-indigo-50 px-4 py-2">
+            <span className="text-sm font-medium text-indigo-800">已选 {selected.size} 个账号</span>
+            <button onClick={() => setSelected(new Set())} className="text-xs text-indigo-600 hover:underline">清空选择</button>
+            <div className="flex-1" />
+            <button
+              onClick={() => { doBatchStart([...selected]); }}
+              disabled={!!batch?.running}
+              className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+            >🚀 保活选中</button>
+            <button
+              onClick={() => doBatch2FA(true)}
+              className="rounded-md border border-blue-400 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100"
+            >🔒 选中开2FA</button>
+            <button
+              onClick={() => { if (confirm(`关闭选中 ${selected.size} 个的双重认证？`)) doBatch2FA(false); }}
+              className="rounded-md border border-gray-400 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100"
+            >🔓 选中关2FA</button>
+            <button
+              onClick={() => {
+                if (!confirm(`删除选中的 ${selected.size} 个账号（连同登录数据）？此操作不可恢复！`)) return;
+                Promise.all([...selected].map((id) => api.removeAccount(id))).then(() => {
+                  setSelected(new Set());
+                  refresh();
+                });
+              }}
+              className="rounded-md border border-red-300 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50"
+            >🗑 删除选中</button>
+          </div>
+        )}
+
         {/* 账号表 */}
         <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
           <table className="w-full text-sm">
             <thead className="bg-gray-100 text-xs text-gray-500">
               <tr>
+                <th className="w-10 px-3 py-2">
+                  <input type="checkbox" checked={allSelected} onChange={toggleSelectAll} title="全选/清空" />
+                </th>
                 <th className="px-4 py-2 text-left">用户名</th>
                 <th className="px-3 py-2 text-left">分组</th>
                 <th className="px-3 py-2">双重认证</th>
@@ -266,19 +323,22 @@ export default function App() {
             </thead>
             <tbody>
               {accounts.length === 0 && (
-                <tr><td colSpan={8} className="px-4 py-10 text-center text-gray-400">还没有账号——点右上「📥 导入账号」批量导入（每行：用户名,密码）</td></tr>
+                <tr><td colSpan={9} className="px-4 py-10 text-center text-gray-400">还没有账号——点右上「📥 导入账号」批量导入（每行：用户名,密码）</td></tr>
               )}
               {accounts.map((a) => {
                 const d = daysLeft(a);
                 const dueNow = d === null || d <= 0;
                 const flow = a.flow;
                 return (
-                  <tr
-                    key={a.id}
-                    className={`cursor-pointer border-t border-gray-100 hover:bg-gray-50 ${selectedId === a.id ? 'bg-blue-50' : ''}`}
-                    onClick={() => setSelectedId(selectedId === a.id ? null : a.id)}
-                  >
-                    <td className="px-4 py-2 font-medium text-gray-900">
+              <tr
+                key={a.id}
+                className={`cursor-pointer border-t border-gray-100 hover:bg-gray-50 ${selectedId === a.id ? 'bg-blue-50' : ''}`}
+                onClick={() => setSelectedId(selectedId === a.id ? null : a.id)}
+              >
+                <td className="px-3 py-2 text-center" onClick={(e) => e.stopPropagation()}>
+                  <input type="checkbox" checked={selected.has(a.id)} onChange={() => toggleSelect(a.id)} />
+                </td>
+                <td className="px-4 py-2 font-medium text-gray-900">
                       {a.username}
                       {a.phoneMasked && <span className="ml-2 font-mono text-[11px] text-gray-400">{a.phoneMasked}</span>}
                     </td>
