@@ -439,7 +439,7 @@ export default function App() {
               onChange={(e) => setImportText(e.target.value)}
               rows={10}
               autoFocus
-              placeholder={'user1,qweasd159\nuser2,qweasd159,GLM'}
+              placeholder={'your_username,your_password\nuser2,your_password,分组名'}
               className="mb-4 w-full rounded-md border border-gray-300 p-2 font-mono text-sm focus:border-indigo-500 focus:outline-none"
             />
             <div className="flex justify-end gap-2">
