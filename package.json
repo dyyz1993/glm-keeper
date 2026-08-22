@@ -1,0 +1,35 @@
+{
+  "name": "glm-keeper",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "GLM 账号保活操作台：批量登录续签 + 双重认证管理 + 登录态（token）备份恢复",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc && vite build web",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.0.1",
+    "@fastify/static": "^8.0.3",
+    "fastify": "^5.2.1",
+    "playwright-core": "^1.49.0",
+    "uuid": "^11.1.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/uuid": "^10.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwindcss": "^3.4.17",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.0"
+  }
+}
