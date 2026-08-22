@@ -105,6 +105,20 @@ export default function App() {
     }
   };
 
+  /** 登录态采集留痕：读所有 profile（含 browser-manager）的 token 存档 */
+  const doHarvest = async () => {
+    try {
+      flash('🍯 采集中（headless 逐个读取 profile，约每号 2 秒）...');
+      const res = await fetch('/api/tokens/harvest', { method: 'POST' });
+      const r = await res.json();
+      const d = r.data || r;
+      flash(`采集完成：扫 ${d.scanned} 个 profile，新留痕 ${d.archived}，空 ${d.empty}，锁定 ${d.locked}`);
+      refresh();
+    } catch (err) {
+      flash(`采集失败: ${(err as Error).message}`);
+    }
+  };
+
   const due = accounts.filter((a) => {
     const d = daysLeft(a);
     return d === null || d <= 0;
@@ -138,6 +152,7 @@ export default function App() {
               <button onClick={() => api.batchStop().then(refresh)} className="rounded-md bg-yellow-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-yellow-700">⏹ 停止</button>
             )}
             <button onClick={doSweep} className="rounded-md border border-green-300 px-3 py-1.5 text-xs font-medium text-green-700 hover:bg-green-50">🩺 健康检查</button>
+            <button onClick={doHarvest} className="rounded-md border border-orange-300 px-3 py-1.5 text-xs font-medium text-orange-700 hover:bg-orange-50" title="读取所有 profile（含 browser-manager）里的 token 存档留痕，免登录无滑块">🍯 采集登录态</button>
             <button onClick={doExportSupport} className="rounded-md border border-amber-300 px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50" title="导出全部账号状态/token/流程日志/操作日志（含秘密，勿外传）">📦 导出诊断包</button>
           </div>
         </div>

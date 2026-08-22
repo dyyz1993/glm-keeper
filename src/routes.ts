@@ -5,6 +5,7 @@ import { keeperService } from './services/keeper-service.js';
 import { sweepAll } from './services/health-service.js';
 import { oplog, readOplog } from './services/oplog.js';
 import { openSession } from './services/session-service.js';
+import { harvestAll } from './services/harvest-service.js';
 import { config } from './config.js';
 
 const importSchema = z.object({
@@ -133,6 +134,13 @@ export async function routes(app: FastifyInstance): Promise<void> {
   app.post('/api/health/sweep', async () => {
     const r = await sweepAll();
     oplog('health.sweep', r);
+    return { data: r };
+  });
+
+  // ===== 登录态采集留痕（headless 读 profile cookie，含 browser-manager 来源） =====
+
+  app.post('/api/tokens/harvest', async () => {
+    const r = await harvestAll();
     return { data: r };
   });
 }

@@ -14,6 +14,14 @@ export interface FlowState {
   logs: FlowLogEntry[];
 }
 
+/** 登录态留痕：历史 token 备份（新旧会话并存，7 天内都能用，多留多保险） */
+export interface TokenHistoryEntry {
+  token: string;
+  issuedAt: string;
+  /** 来源：login=登录存档 / harvest=profile采集 */
+  source: string;
+}
+
 export interface Account {
   id: string;
   username: string;            // bigmodel 用户名（登录用，不用手机号）
@@ -29,6 +37,8 @@ export interface Account {
   token: string | null;
   tokenIssuedAt: string | null;
   tokenBackupAt: string | null;
+  /** 历史留痕（去重，最近 10 份；最新 token 失效时按序回退尝试） */
+  tokenHistory?: TokenHistoryEntry[];
   /** 健康检查（HTTP 探测）结果 */
   tokenOk: boolean | null;
   tokenCheckedAt: string | null;

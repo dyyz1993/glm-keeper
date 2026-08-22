@@ -141,23 +141,41 @@ class KeeperService {
     acc.status = 'working';
     acc.lastError = null;
 
-    // ── 前置（HTTP）：旧 token 有效则先关 2FA，为重登扫清障碍 ──
-    if (acc.token) {
-      step(flow, 'twofa-off', '检查旧 token 并关闭双重认证（HTTP）...');
-      const probe = await probeToken(acc.token);
-      acc.tokenOk = probe.ok;
+    // ── 前置（HTTP）：按序尝试候选 token（最新优先+历史留痕），有效则关 2FA ──
+    const candidates = accountStore.tokenCandidates(acc.id);
+    if (candidates.length > 0) {
+      step(flow, 'twofa-off', '检查 token 并关闭双重认证（HTTP）...');
+      let working: string | null = null;
+      let probe = await probeToken(candidates[0]);
+      if (!probe.ok && candidates.length > 1) {
+        log(flow, '最新 token 已失效，尝试历史留痕...');
+        for (const cand of candidates.slice(1)) {
+          probe = await probeToken(cand);
+          if (probe.ok) {
+            working = cand;
+            break;
+          }
+        }
+      } else if (probe.ok) {
+        working = candidates[0];
+      }
+      acc.tokenOk = !!working;
       acc.tokenCheckedAt = new Date().toISOString();
-      if (probe.ok) {
+      if (working) {
+        if (working !== acc.token) {
+          acc.token = working;
+          log(flow, '✅ 历史 token 命中（留痕兜底生效）');
+        }
         acc.twofaEnabled = probe.enableTwoFa ?? acc.twofaEnabled;
         if (acc.twofaEnabled === true) {
-          await setTwoFa(acc.token, false);
+          await setTwoFa(working, false);
           acc.twofaEnabled = false;
           log(flow, '✅ 双重认证已通过 HTTP 关闭（免浏览器）');
         } else {
           log(flow, '双重认证本就是关闭状态');
         }
       } else {
-        log(flow, `⚠️ 旧 token 已失效（${probe.msg}），无法 HTTP 关 2FA——若 2FA 开着，登录会被拦截`);
+        log(flow, `⚠️ 所有备份 token 均失效，无法 HTTP 关 2FA——若 2FA 开着，登录会被拦截`);
       }
     }
 
@@ -172,15 +190,22 @@ class KeeperService {
 
       let loggedIn = await isLoggedIn(page);
 
-      // 未登录 → 先尝试塞备份 token 恢复（免登录；7 天窗口内有效）
-      if (!loggedIn && acc.token && acc.tokenOk !== false) {
-        step(flow, 'restore', '尝试用备份 token 恢复登录态...');
-        await injectToken(page, acc.token);
-        await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
-        await sleep(2500);
-        await ensureNoCaptcha(page, flow);
-        loggedIn = await isLoggedIn(page);
-        log(flow, loggedIn ? '✅ 备份 token 恢复登录态成功' : '备份 token 恢复失败，走重新登录');
+      // 未登录 → 按序尝试候选 token 恢复（最新优先，历史留痕兜底，最多试 3 个）
+      if (!loggedIn && candidates.length > 0) {
+        for (const cand of candidates.slice(0, 3)) {
+          const isLatest = cand === candidates[0];
+          step(flow, 'restore', `尝试${isLatest ? '最新' : '历史'}备份 token 恢复登录态...`);
+          await injectToken(page, cand);
+          await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
+          await sleep(2500);
+          await ensureNoCaptcha(page, flow);
+          if (await isLoggedIn(page)) {
+            loggedIn = true;
+            log(flow, `✅ 备份 token 恢复登录态成功（${isLatest ? '最新' : '历史留痕兜底'}）`);
+            break;
+          }
+        }
+        if (!loggedIn) log(flow, '备份 token 全部失效，走重新登录');
         this.checkCancel();
       }
 
@@ -210,16 +235,14 @@ class KeeperService {
 
     const now = new Date().toISOString();
     if (!newToken) throw new Error('未获取到新 token');
-    acc.token = newToken;
-    acc.tokenIssuedAt = now;
-    acc.tokenBackupAt = now;
+    accountStore.archiveToken(acc.id, newToken, 'login'); // 留痕（历史+最新指针）
     acc.tokenOk = true;
     acc.tokenCheckedAt = now;
-    log(flow, `✅ 新 token 已存档（有效期 7 天）`);
+    log(flow, `✅ 新 token 已留痕存档（有效期 7 天，历史备份 ${(acc.tokenHistory ?? []).length} 份）`);
 
     // ── 后置（HTTP）：新 token 开启 2FA（闲置保险） ──
     step(flow, 'twofa-on', '开启双重认证（HTTP）...');
-    await setTwoFa(acc.token, true);
+    await setTwoFa(newToken, true);
     acc.twofaEnabled = true;
     log(flow, '✅ 双重认证已通过 HTTP 开启');
 
