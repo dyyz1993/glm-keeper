@@ -17,6 +17,8 @@ export interface Account {
   status: string;
   lastError: string | null;
   flow: { running: boolean; step: string; stepText: string; logs: { time: string; msg: string }[] } | null;
+  /** 是否有打开的会话浏览器（运行时，不持久化） */
+  sessionOpen?: boolean;
 }
 
 export interface BatchStatus {

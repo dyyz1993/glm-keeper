@@ -100,6 +100,18 @@ export default function App() {
       const res = await fetch(`/api/accounts/${id}/open-session`, { method: 'POST' });
       const r = await res.json();
       flash(`${username}: ${r.msg || r.error}`);
+      refresh();
+    } catch (err) {
+      flash((err as Error).message);
+    }
+  };
+
+  const doCloseSession = async (id: string, username: string) => {
+    try {
+      const res = await fetch(`/api/accounts/${id}/close-session`, { method: 'POST' });
+      const r = await res.json();
+      flash(`${username}: ${r.msg || r.error}`);
+      refresh();
     } catch (err) {
       flash((err as Error).message);
     }
@@ -242,11 +254,19 @@ export default function App() {
                       )}
                     </td>
                     <td className="px-3 py-2 text-center" onClick={(e) => e.stopPropagation()}>
-                      <button
-                        onClick={() => doOpenSession(a.id, a.username)}
-                        className="mr-1 rounded border border-gray-300 px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-100"
-                        title="打开一个登录好的浏览器（塞备份 token，10 分钟自动关）"
-                      >打开</button>
+                      {a.sessionOpen ? (
+                        <button
+                          onClick={() => doCloseSession(a.id, a.username)}
+                          className="mr-1 rounded border border-red-400 bg-red-50 px-2 py-0.5 text-[11px] font-medium text-red-600 hover:bg-red-100"
+                          title="立即关闭该账号的会话浏览器（关闭前自动收割最新 token）"
+                        >🔴 关闭</button>
+                      ) : (
+                        <button
+                          onClick={() => doOpenSession(a.id, a.username)}
+                          className="mr-1 rounded border border-gray-300 px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-100"
+                          title="打开一个登录好的浏览器（塞备份 token，10 分钟自动关）"
+                        >打开</button>
+                      )}
                       <button
                         onClick={() => doBatchStart([a.id])}
                         disabled={!!batch?.running}

@@ -4,7 +4,7 @@ import { accountStore } from './services/account-store.js';
 import { keeperService } from './services/keeper-service.js';
 import { sweepAll } from './services/health-service.js';
 import { oplog, readOplog } from './services/oplog.js';
-import { openSession } from './services/session-service.js';
+import { openSession, closeSession, isSessionOpen } from './services/session-service.js';
 import { harvestAll } from './services/harvest-service.js';
 import { config } from './config.js';
 
@@ -19,7 +19,8 @@ export async function routes(app: FastifyInstance): Promise<void> {
   // ===== 账号 =====
 
   app.get('/api/accounts', async () => {
-    return { data: accountStore.list() };
+    const data = accountStore.list().map((a) => ({ ...a, sessionOpen: isSessionOpen(a.id) }));
+    return { data };
   });
 
   app.post('/api/accounts/import', async (request, reply) => {
@@ -50,7 +51,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
     return { added, updated, bad };
   });
 
-  /** 打开该账号的登录会话（诊断/复原：塞备份 token，10 分钟自动关） */
+  /** 打开该账号的登录会话（诊断/复原：塞备份 token，10 分钟自动关或手动关） */
   app.post<{ Params: { id: string } }>('/api/accounts/:id/open-session', async (request, reply) => {
     const acc = accountStore.get(request.params.id);
     if (!acc) {
@@ -60,6 +61,16 @@ export async function routes(app: FastifyInstance): Promise<void> {
     oplog('account.open-session', { username: acc.username });
     const r = await openSession(acc.id, acc.token);
     return r;
+  });
+
+  /** 立即关闭该账号的打开会话（关闭前最后收割一次 token） */
+  app.post<{ Params: { id: string } }>('/api/accounts/:id/close-session', async (request, reply) => {
+    const ok = await closeSession(request.params.id);
+    if (!ok) {
+      reply.code(400);
+      return { error: '该账号没有打开的会话' };
+    }
+    return { success: true, msg: '会话已关闭（已做最后 token 收割）' };
   });
 
   /** 诊断包导出：全部账号状态 + token + 流程日志 + 操作日志（给 owner 复原/排查用） */

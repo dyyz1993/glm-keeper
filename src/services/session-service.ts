@@ -315,16 +315,62 @@ export async function passwordLogin(
 
 export { log, step, sleep };
 
+/** 打开中的会话注册表（accountId → 浏览器上下文 + 监控定时器） */
+interface OpenSessionEntry {
+  ctx: BrowserContext;
+  monitor: NodeJS.Timeout;
+  timer: NodeJS.Timeout;
+  openedAt: string;
+}
+const openSessions = new Map<string, OpenSessionEntry>();
+
+export function isSessionOpen(accountId: string): boolean {
+  return openSessions.has(accountId);
+}
+
+/** 会话关闭前最后收割一次 token（防 15s 监控漏掉刚登录的），然后关浏览器 */
+export async function closeSession(accountId: string): Promise<boolean> {
+  const entry = openSessions.get(accountId);
+  if (!entry) return false;
+  clearInterval(entry.monitor);
+  clearTimeout(entry.timer);
+  try {
+    const bmPage = entry.ctx.pages().find((p) => !p.isClosed() && p.url().includes('bigmodel.cn'));
+    if (bmPage) {
+      const tok = await readToken(bmPage);
+      if (tok && !accountStore.tokenCandidates(accountId).includes(tok)) {
+        accountStore.archiveToken(accountId, tok, 'manual-login');
+        const acc = accountStore.get(accountId);
+        if (acc) {
+          acc.lastLoginAt = new Date().toISOString();
+          acc.status = 'ok';
+          acc.lastError = null;
+        }
+        accountStore.save();
+        oplog('account.manual-login-captured', { username: acc?.username, at: 'close' });
+      }
+    }
+  } catch {
+    // 忽略
+  }
+  await entry.ctx.close().catch(() => {});
+  openSessions.delete(accountId);
+  oplog('account.session-closed', { accountId });
+  return true;
+}
+
 /**
  * 打开一个该账号的浏览器会话（诊断/复原用）：
- * 优先用现有登录态；失效则塞备份 token 恢复。浏览器保持打开（10 分钟自动关闭）。
- * 期间若人工手动登录成功，15 秒内自动捕获新 token 入留痕（来源 manual-login），
- * 并更新最近登录时间与状态——无需手动提取。
+ * 优先用现有登录态；失效则塞备份 token 恢复。浏览器保持打开（10 分钟自动关闭，
+ * 或点「关闭」立即关）。期间人工手动登录成功，15 秒内自动捕获新 token 入留痕。
  */
 export async function openSession(
   accountId: string,
   token: string | null
 ): Promise<{ ok: boolean; msg: string }> {
+  if (openSessions.has(accountId)) {
+    return { ok: true, msg: '该账号已有一个打开的会话（点「关闭」可立即关闭）' };
+  }
   const dir = path.join(config.profilesDir, accountId);
   fs.mkdirSync(dir, { recursive: true });
   const ctx = await chromium.launchPersistentContext(dir, {
@@ -345,15 +391,14 @@ export async function openSession(
     }
     const ok = await isLoggedIn(page);
 
-    // 手动登录自动捕获：每 15 秒扫一次 bigmodel 页面的 token cookie，
-    // 出现未留痕的新 token = 刚发生了一次成功登录 → 自动入账
+    // 手动登录自动捕获：每 15 秒扫一次 bigmodel 页面的 token cookie
     const monitor = setInterval(async () => {
       try {
         const bmPage = ctx.pages().find((p) => !p.isClosed() && p.url().includes('bigmodel.cn'));
         if (!bmPage) return;
         const tok = await readToken(bmPage);
         if (!tok) return;
-        if (accountStore.tokenCandidates(accountId).includes(tok)) return; // 已留痕
+        if (accountStore.tokenCandidates(accountId).includes(tok)) return;
         accountStore.archiveToken(accountId, tok, 'manual-login');
         const acc = accountStore.get(accountId);
         if (acc) {
@@ -370,16 +415,27 @@ export async function openSession(
     }, 15_000);
 
     const timer = setTimeout(() => {
-      clearInterval(monitor);
-      ctx.close().catch(() => {});
+      void closeSession(accountId);
     }, 10 * 60_000);
     timer.unref?.();
+
+    openSessions.set(accountId, { ctx, monitor, timer, openedAt: new Date().toISOString() });
+    // 用户手动关掉浏览器窗口时也要清理注册表
+    ctx.on('close', () => {
+      const entry = openSessions.get(accountId);
+      if (entry) {
+        clearInterval(entry.monitor);
+        clearTimeout(entry.timer);
+        openSessions.delete(accountId);
+      }
+    });
+    oplog('account.session-opened', { accountId });
 
     return {
       ok,
       msg: ok
-        ? '已打开登录好的浏览器（10 分钟后自动关闭；期间手动操作产生的新登录态会自动留痕）'
-        : '未能恢复登录态（备份 token 可能已失效）——浏览器已打开，手动登录后将自动捕获留痕',
+        ? '已打开登录好的浏览器（10 分钟自动关；期间手动登录的新 token 会自动留痕）'
+        : '未能恢复登录态——浏览器已打开，手动登录后将自动捕获留痕',
     };
   } catch (err) {
     await ctx.close().catch(() => {});
