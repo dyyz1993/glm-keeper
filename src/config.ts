@@ -31,6 +31,8 @@ export const config = {
     keepAliveDays: Number(process.env.KEEP_ALIVE_DAYS) || 3,
     /** token 自然寿命（天），用于看板倒计时 */
     tokenLifeDays: 7,
+    /** 双人共用账号时自动同步（2FA/token 真实状态探测）间隔；0=关闭 */
+    autoSweepMs: Number(process.env.AUTO_SWEEP_MS ?? 5 * 60_000),
     /** 等人工滑块超时 */
     captchaTimeoutMs: 180_000,
     /** 点击登录后等待跳转 */
