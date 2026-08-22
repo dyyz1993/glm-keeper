@@ -30,9 +30,54 @@ export async function routes(app: FastifyInstance): Promise<void> {
       reply.code(400);
       return { error: '参数校验失败', details: parsed.error.format() };
     }
+    const text = parsed.data.text.trim();
+
+    // ── 会话包 JSON 导入（从另一台机器「导出会话包」得到，连登录态一起进来） ──
+    if (text.startsWith('{')) {
+      try {
+        const pkg = JSON.parse(text) as {
+          kind?: string;
+          accounts?: Array<{
+            username: string;
+            password?: string;
+            token?: string | null;
+            tokenIssuedAt?: string | null;
+            twofaEnabled?: boolean | null;
+            accountId?: string;
+            group?: string;
+            note?: string;
+          }>;
+        };
+        if (!Array.isArray(pkg.accounts)) throw new Error('缺少 accounts 数组（不是有效的会话包）');
+        const rows = pkg.accounts
+          .filter((e) => e.username)
+          .map((e) => ({ username: e.username, password: e.password || '', group: e.group, note: e.note }));
+        const { added, updated } = accountStore.import(rows);
+        // 会话（token）注入：按用户名归档
+        let tokens = 0;
+        for (const e of pkg.accounts) {
+          if (!e.username || !e.token) continue;
+          const acc = accountStore.findByUsername(e.username);
+          if (acc && accountStore.archiveToken(acc.id, e.token, 'session-import')) {
+            if (e.twofaEnabled !== undefined) acc.twofaEnabled = e.twofaEnabled;
+            if (e.accountId) acc.accountId = e.accountId;
+            if (e.phoneMasked) acc.phoneMasked = e.phoneMasked;
+            tokens++;
+          }
+        }
+        accountStore.save();
+        oplog('accounts.import-session', { added, updated, tokens });
+        return { added, updated, tokensImported: tokens, bad: [] };
+      } catch (err) {
+        reply.code(400);
+        return { error: `会话包解析失败: ${(err as Error).message}` };
+      }
+    }
+
+    // ── CSV 逐行导入：用户名,密码[,分组][,备注] ──
     const rows: { username: string; password: string; group?: string; note?: string }[] = [];
     const bad: string[] = [];
-    for (const line of parsed.data.text.split('\n')) {
+    for (const line of text.split('\n')) {
       const t = line.trim();
       if (!t || t.startsWith('#')) continue;
       // 标准格式：用户名,密码[,分组][,备注]
@@ -101,6 +146,23 @@ export async function routes(app: FastifyInstance): Promise<void> {
       accounts,
       oplog: readOplog(500),
     };
+  });
+
+  /** 会话包导出（迁移用）：紧凑格式，另一台机器导入后直接拥有登录态，无需重新登录 */
+  app.get('/api/sessions/export', async () => {
+    oplog('sessions.export');
+    const accounts = accountStore.list().map((a) => ({
+      username: a.username,
+      password: a.password,
+      token: a.token,
+      tokenIssuedAt: a.tokenIssuedAt,
+      twofaEnabled: a.twofaEnabled,
+      accountId: a.accountId,
+      phoneMasked: a.phoneMasked,
+      group: a.group,
+      note: a.note,
+    }));
+    return { kind: 'glm-keeper-sessions', exportedAt: new Date().toISOString(), accounts };
   });
 
   app.delete<{ Params: { id: string }; Querystring: { purge?: string } }>(

@@ -43,7 +43,7 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 export const api = {
   accounts: () => request<{ data: Account[] }>('/api/accounts'),
   importAccounts: (text: string) =>
-    request<{ added: number; updated: number; bad: string[] }>('/api/accounts/import', {
+    request<{ added: number; updated: number; bad?: string[]; tokensImported?: number }>('/api/accounts/import', {
       method: 'POST',
       body: JSON.stringify({ text }),
     }),

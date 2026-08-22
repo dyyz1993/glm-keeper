@@ -58,10 +58,30 @@ export default function App() {
     setTimeout(() => setMsg(''), 5000);
   };
 
+  /** 导出会话包（迁移用：账号+密码+token 登录态，另一台机器导入即用） */
+  const doExportSessions = async () => {
+    try {
+      const res = await fetch('/api/sessions/export');
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `glm-keeper-sessions-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      flash('会话包已导出（含密码+token，仅限自己迁移使用，勿外传）');
+    } catch (err) {
+      flash(`导出失败: ${(err as Error).message}`);
+    }
+  };
+
   const doImport = async () => {
     try {
       const r = await api.importAccounts(importText);
-      flash(`导入完成：新增 ${r.added}，更新 ${r.updated}${r.bad.length ? `，无效行 ${r.bad.length}` : ''}`);
+      if ((r as { tokensImported?: number }).tokensImported !== undefined) {
+        flash(`会话包导入：账号 +${r.added}/更新${r.updated}，登录态 token ${(r as { tokensImported: number }).tokensImported} 个`);
+      } else {
+        flash(`导入完成：新增 ${r.added}，更新 ${r.updated}${r.bad.length ? `，无效行 ${r.bad.length}` : ''}`);
+      }
       setShowImport(false);
       setImportText('');
       refresh();
@@ -232,6 +252,7 @@ export default function App() {
               title="批量关闭（仅在需要批量重登前使用）"
             >🔓 {selected.size > 0 ? `选中关2FA(${selected.size})` : '全部关2FA'}</button>
             <button onClick={doHarvest} className="rounded-md border border-orange-300 px-3 py-1.5 text-xs font-medium text-orange-700 hover:bg-orange-50" title="读取所有 profile（含 browser-manager）里的 token 存档留痕，免登录无滑块">🍯 采集登录态</button>
+            <button onClick={doExportSessions} className="rounded-md border border-purple-300 px-3 py-1.5 text-xs font-medium text-purple-700 hover:bg-purple-50" title="导出账号+密码+登录态（token）为 JSON——给另一台机器导入即用，含秘密勿外传">📤 导出会话包</button>
             <button onClick={doExportSupport} className="rounded-md border border-amber-300 px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50" title="导出全部账号状态/token/流程日志/操作日志（含秘密，勿外传）">📦 导出诊断包</button>
           </div>
         </div>
@@ -433,7 +454,7 @@ export default function App() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-lg rounded-lg bg-white p-5 shadow-xl">
             <h3 className="mb-2 text-base font-semibold text-gray-900">📥 批量导入账号</h3>
-            <p className="mb-3 text-xs text-gray-500">每行一个账号：<code className="rounded bg-gray-100 px-1">用户名,密码</code>（可选第三列分组；# 开头行忽略）</p>
+            <p className="mb-3 text-xs text-gray-500">两种格式：① 每行 <code className="rounded bg-gray-100 px-1">用户名,密码[,分组]</code>　② 直接粘贴「📤 导出会话包」的 JSON（连登录态一起导入）</p>
             <textarea
               value={importText}
               onChange={(e) => setImportText(e.target.value)}
