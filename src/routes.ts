@@ -6,6 +6,7 @@ import { sweepAll } from './services/health-service.js';
 import { oplog, readOplog } from './services/oplog.js';
 import { openSession, closeSession, isSessionOpen } from './services/session-service.js';
 import { harvestAll } from './services/harvest-service.js';
+import { probeToken, setTwoFa } from './services/health-service.js';
 import { config } from './config.js';
 
 const importSchema = z.object({
@@ -146,6 +147,81 @@ export async function routes(app: FastifyInstance): Promise<void> {
     const r = await sweepAll();
     oplog('health.sweep', r);
     return { data: r };
+  });
+
+  // ===== 双重认证管理（HTTP，秒级免浏览器） =====
+
+  /** 单账号切换 2FA：自动挑一枚有效 token 执行 */
+  app.post<{ Params: { id: string }; Body: { enable: boolean } }>(
+    '/api/accounts/:id/twofa',
+    async (request, reply) => {
+      const acc = accountStore.get(request.params.id);
+      if (!acc) {
+        reply.code(404);
+        return { error: '账号不存在' };
+      }
+      const enable = request.body?.enable === true;
+      // 按序挑一枚有效 token（最新优先→历史留痕）
+      let working: string | null = null;
+      for (const cand of accountStore.tokenCandidates(acc.id)) {
+        const p = await probeToken(cand);
+        if (p.ok) {
+          working = cand;
+          acc.tokenOk = true;
+          acc.tokenCheckedAt = new Date().toISOString();
+          break;
+        }
+      }
+      if (!working) {
+        acc.tokenOk = false;
+        accountStore.save();
+        reply.code(400);
+        return { error: '该账号没有有效 token（先跑一次保活或采集登录态）' };
+      }
+      try {
+        await setTwoFa(working, enable);
+        acc.twofaEnabled = enable;
+        accountStore.save();
+        oplog('twofa.toggle', { username: acc.username, enable });
+        return { success: true, twofaEnabled: enable };
+      } catch (err) {
+        reply.code(400);
+        return { error: (err as Error).message };
+      }
+    }
+  );
+
+  /** 批量切换 2FA（只处理有有效 token 的账号） */
+  app.post<{ Body: { enable: boolean } }>('/api/twofa/batch', async (request) => {
+    const enable = request.body?.enable === true;
+    let ok = 0;
+    let fail = 0;
+    const errors: string[] = [];
+    for (const acc of accountStore.list()) {
+      let working: string | null = null;
+      for (const cand of accountStore.tokenCandidates(acc.id)) {
+        if ((await probeToken(cand)).ok) {
+          working = cand;
+          break;
+        }
+      }
+      if (!working) {
+        fail++;
+        errors.push(`${acc.username}: 无有效 token`);
+        continue;
+      }
+      try {
+        await setTwoFa(working, enable);
+        acc.twofaEnabled = enable;
+        ok++;
+      } catch (err) {
+        fail++;
+        errors.push(`${acc.username}: ${(err as Error).message}`);
+      }
+    }
+    accountStore.save();
+    oplog('twofa.batch', { enable, ok, fail });
+    return { ok, fail, errors };
   });
 
   // ===== 登录态采集留痕（headless 读 profile cookie，含 browser-manager 来源） =====

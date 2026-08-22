@@ -117,6 +117,41 @@ export default function App() {
     }
   };
 
+  /** 面板直接切换单账号 2FA（HTTP，秒级） */
+  const doToggle2FA = async (a: Account) => {
+    const target = a.twofaEnabled === true ? false : true; // 未知当作关，切成开
+    try {
+      const res = await fetch(`/api/accounts/${a.id}/twofa`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enable: target }),
+      });
+      const r = await res.json();
+      if (r.error) flash(`${a.username}: ${r.error}`);
+      else flash(`${a.username}: 双重认证已${target ? '开启 🔒' : '关闭 🔓'}`);
+      refresh();
+    } catch (err) {
+      flash((err as Error).message);
+    }
+  };
+
+  /** 批量切换全部账号 2FA */
+  const doBatch2FA = async (enable: boolean) => {
+    try {
+      flash(enable ? '正在批量开启双重认证...' : '正在批量关闭双重认证...');
+      const res = await fetch('/api/twofa/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enable }),
+      });
+      const r = await res.json();
+      flash(`2FA 批量${enable ? '开启' : '关闭'}：成功 ${r.ok}，失败 ${r.fail}${r.errors?.length ? `（如 ${r.errors[0]}）` : ''}`);
+      refresh();
+    } catch (err) {
+      flash((err as Error).message);
+    }
+  };
+
   /** 登录态采集留痕：读所有 profile（含 browser-manager）的 token 存档 */
   const doHarvest = async () => {
     try {
@@ -164,6 +199,16 @@ export default function App() {
               <button onClick={() => api.batchStop().then(refresh)} className="rounded-md bg-yellow-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-yellow-700">⏹ 停止</button>
             )}
             <button onClick={doSweep} className="rounded-md border border-green-300 px-3 py-1.5 text-xs font-medium text-green-700 hover:bg-green-50">🩺 健康检查</button>
+            <button
+              onClick={() => doBatch2FA(true)}
+              className="rounded-md border border-blue-300 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-50"
+              title="批量开启全部账号的双重认证（闲置保险，HTTP 秒级）"
+            >🔒 全部开2FA</button>
+            <button
+              onClick={() => { if (confirm('确定批量关闭全部双重认证？关闭期间账号仅靠密码保护')) doBatch2FA(false); }}
+              className="rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50"
+              title="批量关闭（仅在需要批量重登前使用）"
+            >🔓 全部关2FA</button>
             <button onClick={doHarvest} className="rounded-md border border-orange-300 px-3 py-1.5 text-xs font-medium text-orange-700 hover:bg-orange-50" title="读取所有 profile（含 browser-manager）里的 token 存档留痕，免登录无滑块">🍯 采集登录态</button>
             <button onClick={doExportSupport} className="rounded-md border border-amber-300 px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50" title="导出全部账号状态/token/流程日志/操作日志（含秘密，勿外传）">📦 导出诊断包</button>
           </div>
@@ -238,7 +283,22 @@ export default function App() {
                       {a.phoneMasked && <span className="ml-2 font-mono text-[11px] text-gray-400">{a.phoneMasked}</span>}
                     </td>
                     <td className="px-3 py-2 text-xs text-gray-500">{a.group || '—'}</td>
-                    <td className="px-3 py-2 text-center">{a.twofaEnabled === true ? '🔒 开' : a.twofaEnabled === false ? '🔓 关' : '❓'}</td>
+                    <td className="px-3 py-2 text-center" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        onClick={() => doToggle2FA(a)}
+                        disabled={!!batch?.running}
+                        title={a.twofaEnabled === true ? '点击关闭双重认证（HTTP 秒级）' : '点击开启双重认证（HTTP 秒级）'}
+                        className={`rounded px-2 py-0.5 text-[11px] font-medium disabled:opacity-40 ${
+                          a.twofaEnabled === true
+                            ? 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                            : a.twofaEnabled === false
+                              ? 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                              : 'bg-amber-50 text-amber-600 hover:bg-amber-100'
+                        }`}
+                      >
+                        {a.twofaEnabled === true ? '🔒 开' : a.twofaEnabled === false ? '🔓 关' : '❓ 点同步'}
+                      </button>
+                    </td>
                     <td className="px-3 py-2 text-center text-xs text-gray-500">{fmt(a.lastLoginAt)}</td>
                     <td className={`px-3 py-2 text-center text-xs font-medium ${dueNow ? 'text-red-600' : 'text-gray-600'}`}>
                       {d === null ? '从未登录' : d <= 0 ? '⚠️ 已到期' : `剩 ${d.toFixed(1)} 天`}
