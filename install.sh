@@ -16,6 +16,19 @@ if ! command -v node >/dev/null 2>&1; then
 fi
 echo "✓ Node $(node -v)"
 
+# Chrome 检查（浏览器自动化依赖）
+CHROME=""
+case "$(uname -s)" in
+  Darwin) [ -x "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ] && CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" ;;
+  Linux)  CHROME="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser || true)" ;;
+esac
+if [ -z "$CHROME" ]; then
+  echo "⚠️  未检测到 Chrome/Chromium——保活登录需要它。"
+  echo "   安装后设置环境变量 CHROME_PATH 指向可执行文件再启动。"
+else
+  echo "✓ 浏览器: $CHROME"
+fi
+
 # 获取代码
 if [ -d "$DIR" ]; then
   echo "→ 目录 $DIR 已存在，更新代码..."

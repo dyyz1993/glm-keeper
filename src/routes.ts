@@ -42,11 +42,13 @@ export async function routes(app: FastifyInstance): Promise<void> {
             password?: string;
             token?: string | null;
             tokenIssuedAt?: string | null;
+            lastLoginAt?: string | null;
             twofaEnabled?: boolean | null;
             accountId?: string;
             phoneMasked?: string;
             group?: string;
             note?: string;
+            tokenHistory?: Array<{ token: string; issuedAt: string; source: string }>;
           }>;
         };
         if (!Array.isArray(pkg.accounts)) throw new Error('缺少 accounts 数组（不是有效的会话包）');
@@ -54,17 +56,21 @@ export async function routes(app: FastifyInstance): Promise<void> {
           .filter((e) => e.username)
           .map((e) => ({ username: e.username, password: e.password || '', group: e.group, note: e.note }));
         const { added, updated } = accountStore.import(rows);
-        // 会话（token）注入：按用户名归档
+        // 会话（token）注入：按用户名归档（最新 + 全部历史留痕）
         let tokens = 0;
         for (const e of pkg.accounts) {
-          if (!e.username || !e.token) continue;
+          if (!e.username) continue;
           const acc = accountStore.findByUsername(e.username);
-          if (acc && accountStore.archiveToken(acc.id, e.token, 'session-import')) {
-            if (e.twofaEnabled !== undefined) acc.twofaEnabled = e.twofaEnabled;
-            if (e.accountId) acc.accountId = e.accountId;
-            if (e.phoneMasked) acc.phoneMasked = e.phoneMasked;
-            tokens++;
+          if (!acc) continue;
+          // 先归档历史留痕（旧钥匙），再归档最新（保证最新排在留痕首位）
+          for (const h of [...(e.tokenHistory ?? [])].reverse()) {
+            if (h?.token && accountStore.archiveToken(acc.id, h.token, 'session-import')) tokens++;
           }
+          if (e.token && accountStore.archiveToken(acc.id, e.token, 'session-import')) tokens++;
+          if (e.twofaEnabled !== undefined) acc.twofaEnabled = e.twofaEnabled;
+          if (e.accountId) acc.accountId = e.accountId;
+          if (e.phoneMasked) acc.phoneMasked = e.phoneMasked;
+          if (e.lastLoginAt) acc.lastLoginAt = e.lastLoginAt; // 保活倒计时不失真
         }
         accountStore.save();
         oplog('accounts.import-session', { added, updated, tokens });
@@ -157,11 +163,14 @@ export async function routes(app: FastifyInstance): Promise<void> {
       password: a.password,
       token: a.token,
       tokenIssuedAt: a.tokenIssuedAt,
+      lastLoginAt: a.lastLoginAt,
       twofaEnabled: a.twofaEnabled,
       accountId: a.accountId,
       phoneMasked: a.phoneMasked,
       group: a.group,
       note: a.note,
+      /** 全部历史留痕（多把备用钥匙） */
+      tokenHistory: a.tokenHistory ?? [],
     }));
     return { kind: 'glm-keeper-sessions', exportedAt: new Date().toISOString(), accounts };
   });
