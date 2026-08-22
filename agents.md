@@ -26,7 +26,8 @@ npx vite --root web --port 5181
 - **删/写该 cookie 必须带 `domain=.bigmodel.cn` 属性**，否则不生效
 - **塞回 token = 秒恢复登录态**（7 天窗口内，可跨浏览器/机器移植）；**但不能续命**，寿命从签发算 7 天
 - **续命 = 重新登录**（签新 token）；每次登录轮换 user_key，新旧会话并存无互踢
-- **健康探测**：`GET https://bigmodel.cn/api/biz/customer/getCustomerInfo` + header `Authorization: <token>` → code:200=有效 / 401=失效（毫秒级、不开浏览器）
+- **健康探测**：`GET /api/biz/customer/getCustomerInfo` + header `Authorization: <token>` → code:200=有效（**响应含 enableTwoFa/customerName/customerNumber/掩码手机号**，一石三鸟）/ 401=失效（毫秒级、不开浏览器）
+- **双重认证开关（纯 HTTP，实测）**：`POST /api/biz/customer/updateCustomerInfo` + `Authorization` + body `{"enableTwoFa":bool}` → 200 修改成功。免浏览器免滑块；keeper 全程用此接口管 2FA
 - **改密会踢会话**；活跃使用时前端会滑动刷新 cookie 的 7 天窗口
 
 ## 保活流程（keeper-service，单账号）
