@@ -44,6 +44,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
             tokenIssuedAt?: string | null;
             twofaEnabled?: boolean | null;
             accountId?: string;
+            phoneMasked?: string;
             group?: string;
             note?: string;
           }>;
