@@ -82,10 +82,9 @@ class AccountStore {
     return null;
   }
 
+  /** 固定按导入顺序返回（Map 插入序 = accounts.json 文件序，重启不变，不随登录时间跳动） */
   list(): Account[] {
-    return [...this.accounts.values()].sort((a, b) =>
-      (a.lastLoginAt ?? '').localeCompare(b.lastLoginAt ?? '')
-    );
+    return [...this.accounts.values()];
   }
 
   update(id: string, patch: Partial<Account>): Account | null {
