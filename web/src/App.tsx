@@ -192,7 +192,7 @@ export default function App() {
     const d = daysLeft(a);
     return d === null || d <= 0;
   });
-  const selected = accounts.find((a) => a.id === selectedId) ?? null;
+  const selectedAccount = accounts.find((a) => a.id === selectedId) ?? null;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -405,19 +405,19 @@ export default function App() {
         </div>
 
         {/* 选中账号详情 */}
-        {selected && (
+        {selectedAccount && (
           <div className="mt-4 rounded-lg border border-gray-200 bg-white p-4">
             <div className="mb-2 flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-gray-800">{selected.username} 详情</h3>
+              <h3 className="text-sm font-semibold text-gray-800">{selectedAccount.username} 详情</h3>
               <div className="text-xs text-gray-400">
-                token 存档: {selected.tokenBackupAt ? fmt(selected.tokenBackupAt) : '无'} ·
-                2FA: {selected.twofaEnabled === true ? '开' : selected.twofaEnabled === false ? '关' : '未知'}
-                {selected.lastError && <span className="ml-2 text-red-500">错误: {selected.lastError}</span>}
+                token 存档: {selectedAccount.tokenBackupAt ? fmt(selected.tokenBackupAt) : '无'} ·
+                2FA: {selectedAccount.twofaEnabled === true ? '开' : selected.twofaEnabled === false ? '关' : '未知'}
+                {selectedAccount.lastError && <span className="ml-2 text-red-500">错误: {selected.lastError}</span>}
               </div>
             </div>
-            {selected.flow?.logs?.length ? (
+            {selectedAccount.flow?.logs?.length ? (
               <div className="max-h-48 overflow-y-auto rounded bg-gray-900 p-2 font-mono text-[11px] leading-relaxed text-gray-200">
-                {selected.flow.logs.map((l, i) => (
+                {selectedAccount.flow.logs.map((l, i) => (
                   <div key={i}><span className="text-gray-500">{new Date(l.time).toLocaleTimeString('zh-CN')}</span> {l.msg}</div>
                 ))}
               </div>
