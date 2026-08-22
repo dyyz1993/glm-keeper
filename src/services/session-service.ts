@@ -297,6 +297,16 @@ export async function passwordLogin(
       log(flow, '✅ 登录成功');
       return;
     }
+    // 检测双重认证二次验证拦截（密码对但要求短信二次验证）
+    const hit2fa = await page
+      .evaluate(() => {
+        const t = document.body.innerText || '';
+        return /双重认证|二次验证|安全验证/.test(t);
+      })
+      .catch(() => false);
+    if (hit2fa) {
+      throw new Error('被双重认证拦截：账号开着 2FA 且无 token 备份，无法自动关闭——需人工用手机短信登录一次并关闭 2FA');
+    }
   }
   throw new Error('登录后未跳转（密码错误或被风控拦截）');
 }

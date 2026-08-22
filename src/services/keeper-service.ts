@@ -100,6 +100,15 @@ class KeeperService {
         }
         const acc = accountStore.get(targets[i].id);
         if (!acc) continue;
+        // 已知 2FA 开启且无 token 备份 → HTTP 关不掉，登录必被拦——直接跳过省滑块
+        if (!acc.token && acc.twofaEnabled === true) {
+          acc.status = 'error';
+          acc.lastError = '2FA 开启且无 token 备份（无法自动关闭），需人工短信登录关闭 2FA 后重跑';
+          accountStore.save();
+          this.log(`[${i + 1}/${targets.length}] ⏭️ ${acc.username} 跳过：${acc.lastError}`);
+          oplog('account.skip-2fa-locked', { username: acc.username });
+          continue;
+        }
         this.status.currentId = acc.id;
         this.status.done = i;
         this.log(`[${i + 1}/${targets.length}] ${acc.username} 开始保活...`);
