@@ -112,6 +112,7 @@ class KeeperService {
           if (msg === '已手动停止') throw err;
           acc.status = 'error';
           acc.lastError = msg;
+          accountStore.save();
           this.log(`[${i + 1}/${targets.length}] ❌ ${acc.username} 失败: ${msg}`);
           oplog('account.error', { username: acc.username, error: msg });
         }
@@ -216,6 +217,7 @@ class KeeperService {
     acc.lastLoginAt = now;
     acc.status = 'ok';
     acc.flow = { ...flow, running: false, step: 'done', stepText: '保活完成' };
+    accountStore.save(); // 关键：token 等资产立即落盘，防止重启丢失
   }
 }
 
