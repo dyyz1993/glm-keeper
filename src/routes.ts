@@ -24,14 +24,15 @@ export async function routes(app: FastifyInstance): Promise<void> {
       reply.code(400);
       return { error: '参数校验失败', details: parsed.error.format() };
     }
-    const rows: { username: string; password: string; group?: string }[] = [];
+    const rows: { username: string; password: string; group?: string; note?: string }[] = [];
     const bad: string[] = [];
     for (const line of parsed.data.text.split('\n')) {
       const t = line.trim();
       if (!t || t.startsWith('#')) continue;
+      // 标准格式：用户名,密码[,分组][,备注]
       const parts = t.split(/[,，\t]/).map((s) => s.trim());
       if (parts.length >= 2 && parts[0] && parts[1]) {
-        rows.push({ username: parts[0], password: parts[1], group: parts[2] || undefined });
+        rows.push({ username: parts[0], password: parts[1], group: parts[2] || undefined, note: parts[3] || undefined });
       } else {
         bad.push(t);
       }

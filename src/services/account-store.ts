@@ -36,7 +36,7 @@ class AccountStore {
   }
 
   /** 批量导入（按用户名去重，已存在则更新密码） */
-  import(rows: { username: string; password: string; group?: string }[]): { added: number; updated: number } {
+  import(rows: { username: string; password: string; group?: string; note?: string }[]): { added: number; updated: number } {
     let added = 0;
     let updated = 0;
     for (const row of rows) {
@@ -52,6 +52,7 @@ class AccountStore {
         username: row.username,
         password: row.password,
         group: row.group,
+        note: row.note,
         createdAt: new Date().toISOString(),
         lastLoginAt: null,
         token: null,
