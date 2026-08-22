@@ -3,6 +3,9 @@ import { z } from 'zod';
 import { accountStore } from './services/account-store.js';
 import { keeperService } from './services/keeper-service.js';
 import { sweepAll } from './services/health-service.js';
+import { oplog, readOplog } from './services/oplog.js';
+import { openSession } from './services/session-service.js';
+import { config } from './config.js';
 
 const importSchema = z.object({
   /** 每行一个账号：用户名,密码[,分组]（支持 CSV 粘贴） */
@@ -42,7 +45,49 @@ export async function routes(app: FastifyInstance): Promise<void> {
       return { error: '没有解析出有效账号（格式：用户名,密码）', bad };
     }
     const { added, updated } = accountStore.import(rows);
+    oplog('accounts.import', { added, updated });
     return { added, updated, bad };
+  });
+
+  /** 打开该账号的登录会话（诊断/复原：塞备份 token，10 分钟自动关） */
+  app.post<{ Params: { id: string } }>('/api/accounts/:id/open-session', async (request, reply) => {
+    const acc = accountStore.get(request.params.id);
+    if (!acc) {
+      reply.code(404);
+      return { error: '账号不存在' };
+    }
+    oplog('account.open-session', { username: acc.username });
+    const r = await openSession(acc.id, acc.token);
+    return r;
+  });
+
+  /** 诊断包导出：全部账号状态 + token + 流程日志 + 操作日志（给 owner 复原/排查用） */
+  app.get('/api/support/export', async () => {
+    oplog('support.export');
+    const accounts = accountStore.list().map((a) => ({
+      username: a.username,
+      group: a.group,
+      note: a.note,
+      accountId: a.accountId,
+      phoneMasked: a.phoneMasked,
+      twofaEnabled: a.twofaEnabled,
+      lastLoginAt: a.lastLoginAt,
+      tokenIssuedAt: a.tokenIssuedAt,
+      tokenBackupAt: a.tokenBackupAt,
+      tokenOk: a.tokenOk,
+      tokenCheckedAt: a.tokenCheckedAt,
+      status: a.status,
+      lastError: a.lastError,
+      /** 秘密：token 可直接塞回 cookie 复原登录态，诊断包勿外传 */
+      token: a.token,
+      flowLogs: a.flow?.logs ?? [],
+    }));
+    return {
+      exportedAt: new Date().toISOString(),
+      keepAliveDays: config.keeper.keepAliveDays,
+      accounts,
+      oplog: readOplog(500),
+    };
   });
 
   app.delete<{ Params: { id: string }; Querystring: { purge?: string } }>(
@@ -75,6 +120,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
       reply.code(400);
       return { error: '没有进行中的批量任务' };
     }
+    oplog('batch.stop');
     return { success: true };
   });
 
@@ -86,6 +132,7 @@ export async function routes(app: FastifyInstance): Promise<void> {
 
   app.post('/api/health/sweep', async () => {
     const r = await sweepAll();
+    oplog('health.sweep', r);
     return { data: r };
   });
 }

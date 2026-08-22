@@ -78,6 +78,33 @@ export default function App() {
     }
   };
 
+  /** 导出诊断包（含 token/流程日志/操作日志，JSON 下载） */
+  const doExportSupport = async () => {
+    try {
+      const res = await fetch('/api/support/export');
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `glm-keeper-support-${new Date().toISOString().slice(0, 16).replace('T', '_')}.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      flash('诊断包已导出（含 token 秘密，勿外传）');
+    } catch (err) {
+      flash(`导出失败: ${(err as Error).message}`);
+    }
+  };
+
+  const doOpenSession = async (id: string, username: string) => {
+    try {
+      flash(`正在为 ${username} 打开会话...`);
+      const res = await fetch(`/api/accounts/${id}/open-session`, { method: 'POST' });
+      const r = await res.json();
+      flash(`${username}: ${r.msg || r.error}`);
+    } catch (err) {
+      flash((err as Error).message);
+    }
+  };
+
   const due = accounts.filter((a) => {
     const d = daysLeft(a);
     return d === null || d <= 0;
@@ -111,6 +138,7 @@ export default function App() {
               <button onClick={() => api.batchStop().then(refresh)} className="rounded-md bg-yellow-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-yellow-700">⏹ 停止</button>
             )}
             <button onClick={doSweep} className="rounded-md border border-green-300 px-3 py-1.5 text-xs font-medium text-green-700 hover:bg-green-50">🩺 健康检查</button>
+            <button onClick={doExportSupport} className="rounded-md border border-amber-300 px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-50" title="导出全部账号状态/token/流程日志/操作日志（含秘密，勿外传）">📦 导出诊断包</button>
           </div>
         </div>
         {msg && <div className="mx-auto mt-2 max-w-6xl text-xs text-blue-600">{msg}</div>}
@@ -199,6 +227,11 @@ export default function App() {
                       )}
                     </td>
                     <td className="px-3 py-2 text-center" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        onClick={() => doOpenSession(a.id, a.username)}
+                        className="mr-1 rounded border border-gray-300 px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-100"
+                        title="打开一个登录好的浏览器（塞备份 token，10 分钟自动关）"
+                      >打开</button>
                       <button
                         onClick={() => doBatchStart([a.id])}
                         disabled={!!batch?.running}

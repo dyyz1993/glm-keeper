@@ -1,6 +1,7 @@
 import { config } from '../config.js';
 import { accountStore } from './account-store.js';
 import { probeToken, setTwoFa } from './health-service.js';
+import { oplog } from './oplog.js';
 import {
   withAccountBrowser,
   isLoggedIn,
@@ -73,6 +74,7 @@ class KeeperService {
     this.cancelFlag = false;
     this.status = { running: true, total: targets.length, done: 0, currentId: null, currentUsername: null, waitingSlider: false, logs: [] };
     for (const a of targets) a.status = 'queued';
+    oplog('batch.start', { total: targets.length, ids: targets.map((t) => t.username) });
 
     this.run(targets).catch((err) => this.log(`队列异常终止: ${(err as Error).message}`));
     return this.status;
@@ -104,12 +106,14 @@ class KeeperService {
         try {
           await this.keepAliveOne(acc);
           this.log(`[${i + 1}/${targets.length}] ✅ ${acc.username} 完成（登录续签 + 双重认证开启 + token 已存档）`);
+          oplog('account.ok', { username: acc.username });
         } catch (err) {
           const msg = (err as Error).message;
           if (msg === '已手动停止') throw err;
           acc.status = 'error';
           acc.lastError = msg;
           this.log(`[${i + 1}/${targets.length}] ❌ ${acc.username} 失败: ${msg}`);
+          oplog('account.error', { username: acc.username, error: msg });
         }
       }
       this.log('队列结束');

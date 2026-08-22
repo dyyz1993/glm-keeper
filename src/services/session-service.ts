@@ -275,8 +275,7 @@ export async function passwordLogin(
   username: string,
   password: string,
   flow: FlowState
-): Promise<void> {
-  step(flow, 'login', `用户名+密码登录（${username}）...`);
+): Promise<void> {  step(flow, 'login', `用户名+密码登录（${username}）...`);
   await ensureNoCaptcha(page, flow);
   await clickFirst(page, SEL.accountTab, '「账号登录」tab');
   await sleep(800);
@@ -303,3 +302,44 @@ export async function passwordLogin(
 }
 
 export { log, step, sleep };
+
+/**
+ * 打开一个该账号的浏览器会话（诊断/复原用）：
+ * 优先用现有登录态；失效则塞备份 token 恢复。浏览器保持打开，10 分钟后自动关闭。
+ */
+export async function openSession(
+  accountId: string,
+  token: string | null
+): Promise<{ ok: boolean; msg: string }> {
+  const dir = path.join(config.profilesDir, accountId);
+  fs.mkdirSync(dir, { recursive: true });
+  const ctx = await chromium.launchPersistentContext(dir, {
+    headless: false,
+    channel: 'chrome',
+    executablePath: config.chromePath,
+    viewport: null,
+    args: ['--no-first-run', '--no-default-browser-check', '--window-size=900,950'],
+  });
+  try {
+    const page = ctx.pages()[0] ?? (await ctx.newPage());
+    await page.goto(config.bigmodel.settingsUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+    await sleep(2500);
+    if (!(await isLoggedIn(page)) && token) {
+      await injectToken(page, token);
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
+      await sleep(2500);
+    }
+    const ok = await isLoggedIn(page);
+    // 保持打开供检查，10 分钟后自动回收
+    setTimeout(() => ctx.close().catch(() => {}), 10 * 60_000).unref?.();
+    return {
+      ok,
+      msg: ok
+        ? '已打开登录好的浏览器（10 分钟后自动关闭）'
+        : '未能恢复登录态（备份 token 可能已失效）——浏览器已打开，可手动登录检查',
+    };
+  } catch (err) {
+    await ctx.close().catch(() => {});
+    return { ok: false, msg: `打开会话失败: ${(err as Error).message}` };
+  }
+}
