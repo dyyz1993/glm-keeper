@@ -2,6 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import { chromium, type Page, type BrowserContext } from 'playwright-core';
 import { config } from '../config.js';
+import { accountStore } from './account-store.js';
+import { oplog } from './oplog.js';
 import type { Account, FlowState } from '../types.js';
 
 /**
@@ -315,7 +317,9 @@ export { log, step, sleep };
 
 /**
  * 打开一个该账号的浏览器会话（诊断/复原用）：
- * 优先用现有登录态；失效则塞备份 token 恢复。浏览器保持打开，10 分钟后自动关闭。
+ * 优先用现有登录态；失效则塞备份 token 恢复。浏览器保持打开（10 分钟自动关闭）。
+ * 期间若人工手动登录成功，15 秒内自动捕获新 token 入留痕（来源 manual-login），
+ * 并更新最近登录时间与状态——无需手动提取。
  */
 export async function openSession(
   accountId: string,
@@ -340,13 +344,42 @@ export async function openSession(
       await sleep(2500);
     }
     const ok = await isLoggedIn(page);
-    // 保持打开供检查，10 分钟后自动回收
-    setTimeout(() => ctx.close().catch(() => {}), 10 * 60_000).unref?.();
+
+    // 手动登录自动捕获：每 15 秒扫一次 bigmodel 页面的 token cookie，
+    // 出现未留痕的新 token = 刚发生了一次成功登录 → 自动入账
+    const monitor = setInterval(async () => {
+      try {
+        const bmPage = ctx.pages().find((p) => !p.isClosed() && p.url().includes('bigmodel.cn'));
+        if (!bmPage) return;
+        const tok = await readToken(bmPage);
+        if (!tok) return;
+        if (accountStore.tokenCandidates(accountId).includes(tok)) return; // 已留痕
+        accountStore.archiveToken(accountId, tok, 'manual-login');
+        const acc = accountStore.get(accountId);
+        if (acc) {
+          acc.lastLoginAt = new Date().toISOString();
+          acc.status = 'ok';
+          acc.lastError = null;
+        }
+        accountStore.save();
+        oplog('account.manual-login-captured', { username: acc?.username });
+        console.log(`[OpenSession] 捕获手动登录 token 并留痕: ${acc?.username}`);
+      } catch {
+        // 页面可能正在导航/关闭，忽略
+      }
+    }, 15_000);
+
+    const timer = setTimeout(() => {
+      clearInterval(monitor);
+      ctx.close().catch(() => {});
+    }, 10 * 60_000);
+    timer.unref?.();
+
     return {
       ok,
       msg: ok
-        ? '已打开登录好的浏览器（10 分钟后自动关闭）'
-        : '未能恢复登录态（备份 token 可能已失效）——浏览器已打开，可手动登录检查',
+        ? '已打开登录好的浏览器（10 分钟后自动关闭；期间手动操作产生的新登录态会自动留痕）'
+        : '未能恢复登录态（备份 token 可能已失效）——浏览器已打开，手动登录后将自动捕获留痕',
     };
   } catch (err) {
     await ctx.close().catch(() => {});
