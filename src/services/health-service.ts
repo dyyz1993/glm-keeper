@@ -62,11 +62,18 @@ export async function setTwoFa(token: string, enable: boolean): Promise<void> {
   }
 }
 
-/** 批量探测所有有 token 备份的账号，更新健康状态（含 2FA 状态） */
-export async function sweepAll(): Promise<{ checked: number; alive: number; dead: number }> {
+/** 批量探测所有有 token 备份的账号，更新健康状态（含 2FA 状态）。
+ *  返回 2FA 变化明细——双人共用账号时，另一边开关过 2FA，这边探测即同步。 */
+export async function sweepAll(): Promise<{
+  checked: number;
+  alive: number;
+  dead: number;
+  twofaFlips: Array<{ username: string; from: boolean | null; to: boolean | null }>;
+}> {
   let alive = 0;
   let dead = 0;
   let checked = 0;
+  const twofaFlips: Array<{ username: string; from: boolean | null; to: boolean | null }> = [];
   for (const acc of accountStore.list()) {
     if (!acc.token) continue;
     checked++;
@@ -82,11 +89,16 @@ export async function sweepAll(): Promise<{ checked: number; alive: number; dead
       }
       if (r.phoneMasked) acc.phoneMasked = r.phoneMasked;
       if (r.accountId) acc.accountId = r.accountId;
-      if (r.enableTwoFa !== undefined) acc.twofaEnabled = r.enableTwoFa;
+      if (r.enableTwoFa !== undefined) {
+        if (acc.twofaEnabled !== null && acc.twofaEnabled !== r.enableTwoFa) {
+          twofaFlips.push({ username: acc.username, from: acc.twofaEnabled, to: r.enableTwoFa });
+        }
+        acc.twofaEnabled = r.enableTwoFa;
+      }
     } else {
       dead++;
     }
   }
   accountStore.save();
-  return { checked, alive, dead };
+  return { checked, alive, dead, twofaFlips };
 }
