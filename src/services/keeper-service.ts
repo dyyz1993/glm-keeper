@@ -220,7 +220,7 @@ class KeeperService {
       }
 
       // 用户名+密码登录（滑块人工）
-      await passwordLogin(page, acc.username, acc.password, flow);
+      await passwordLogin(page, acc.username, acc.password, flow, phoneOf(acc));
       this.checkCancel();
 
       // 登录成功 → 读新 token
@@ -254,3 +254,10 @@ class KeeperService {
 }
 
 export const keeperService = new KeeperService();
+
+/** 从账号备注/既有字段提取手机号（2FA 短信验证登录用） */
+function phoneOf(acc: Account): string | undefined {
+  if (acc.phoneMasked && !acc.phoneMasked.includes('*')) return acc.phoneMasked; // 完整号
+  const m = (acc.note ?? '').match(/(1[3-9]\d{9})/); // 备注里的完整手机号
+  return m ? m[1] : undefined;
+}

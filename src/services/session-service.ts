@@ -276,7 +276,8 @@ export async function passwordLogin(
   page: Page,
   username: string,
   password: string,
-  flow: FlowState
+  flow: FlowState,
+  phone?: string
 ): Promise<void> {  step(flow, 'login', `用户名+密码登录（${username}）...`);
   await ensureNoCaptcha(page, flow);
   await clickFirst(page, SEL.accountTab, '「账号登录」tab');
@@ -307,10 +308,57 @@ export async function passwordLogin(
       })
       .catch(() => false);
     if (hit2fa) {
-      throw new Error('被双重认证拦截：账号开着 2FA 且无 token 备份，无法自动关闭——需人工用手机短信登录一次并关闭 2FA');
+      if (!phone) {
+        throw new Error('被双重认证拦截且未提供手机号，无法短信验证——请补录手机号后重跑');
+      }
+      log(flow, '🔒 密码通过但被双重认证拦截，转入短信验证登录（等待人工填验证码）...');
+      return await twofaSmsLogin(page, phone, flow);
     }
   }
   throw new Error('登录后未跳转（密码错误或被风控拦截）');
+}
+
+/**
+ * 双重认证的短信验证登录（人工填码协助流程）：
+ * 手机号登录 tab → 自动填手机号 → 自动点「获取验证码」（滑块人工）→
+ * 挂起最长 5 分钟等人工在浏览器里填验证码 → 离开登录页即成功。
+ * 注意：验证码到用户手机（实号），不走 LubanSMS。
+ */
+async function twofaSmsLogin(page: Page, phone: string, flow: FlowState): Promise<void> {
+  const phoneTab = ['.el-tabs__item:has-text("手机号登录")', 'text=手机号登录'];
+  try {
+    await clickFirst(page, phoneTab, '「手机号登录」tab');
+    await sleep(800);
+  } catch {
+    // 界面可能已在手机号 tab
+  }
+  const inp = await mustFindInput(page, SEL.phoneInput, '手机号输入框');
+  await inp.fill('');
+  await inp.fill(phone);
+  // 勾协议（若在且未勾）
+  const agree = page.locator('.el-checkbox').first();
+  if ((await agree.count()) > 0) {
+    const checked = await agree.evaluate((el) => el.classList.contains('is-checked')).catch(() => false);
+    if (!checked) await agree.click({ timeout: 3000 }).catch(() => {});
+  }
+  step(flow, '2fa-send', `发送短信验证码到 ${phone}...`);
+  await ensureNoCaptcha(page, flow);
+  const sendBtn = await mustFindClickable(page, SEL.sendBtn, '「获取验证码」按钮');
+  await sendBtn.click({ timeout: 10_000 });
+  await waitForCaptchaOptional(page, flow);
+  log(flow, `📲 验证码已发送到 ${phone}，等待人工在浏览器窗口填入（最长 5 分钟）...`);
+  step(flow, '2fa-wait-code', `⏳ 请查收 ${phone} 的短信并填入验证码（填完自动继续）`);
+
+  const deadline = Date.now() + 5 * 60_000;
+  while (Date.now() < deadline) {
+    await sleep(3000);
+    if (!page.url().includes('/login')) {
+      log(flow, '✅ 短信验证登录成功');
+      return;
+    }
+    await ensureNoCaptcha(page, flow);
+  }
+  throw new Error('等待人工填入短信验证码超时（5 分钟）');
 }
 
 export { log, step, sleep };
