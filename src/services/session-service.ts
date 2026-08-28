@@ -14,6 +14,7 @@ export const SEL = {
   accountTab: ['.el-tabs__item:has-text("账号登录")', 'text=账号登录'],
   accountUserInput: ['input[placeholder="请输入用户名/邮箱/手机号"]'],
   accountPwdInput: ['input[placeholder="请输入密码"]'],
+  sendBtn: ['button.get-verifcode', 'button:has-text("获取验证码")'],
   loginBtn: ['button.login-btn:visible', 'button.login-btn', 'button:has-text("登录")'],
   /** 腾讯防水墙滑块弹窗根节点（关闭时离屏隐藏） */
   captcha: ['.tencent-captcha-dy__content', 'iframe[src*="captcha"]'],
