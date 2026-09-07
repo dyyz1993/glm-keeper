@@ -419,8 +419,8 @@ async function twofaSmsLogin(page: Page, phone: string, flow: FlowState): Promis
       codeInput = await findCodeInputNearButton(page, flow);
     } catch (err) {
       // 上下文可能已销毁——再查一次是否已跳转
-      const url = page.url().catch?.() ?? page.url();
-      if (!String(url).includes('/login')) {
+      const url = page.url();
+      if (!url.includes('/login')) {
         log(flow, '✅ 定位失败但页面已跳转，视为登录成功');
         return;
       }
