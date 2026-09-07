@@ -379,14 +379,20 @@ async function twofaSmsLogin(page: Page, phone: string, flow: FlowState): Promis
       }
     }
     if (!sendBtn) throw new Error('未找到可见的「获取验证码」按钮');
-    await sendBtn.click({ timeout: 10_000 });
-    await waitForCaptchaOptional(page, flow);
-    log(flow, `📲 验证码已发送到 ${phone}，开始通过 LubanSMS 自动接收...`);
+    const clickSend = async (): Promise<void> => {
+      await sendBtn!.click({ timeout: 10_000 });
+      await waitForCaptchaOptional(page, flow);
+      log(flow, `📲 验证码已发送到 ${phone}`);
+      step(flow, "2fa-wait-sms", `📲 短信已发送到 ${phone}，正在自动接收验证码...`);
+    };
+    await clickSend();
 
-    // 轮询 LubanSMS 收码（排除旧码），最长 5 分钟（老号短信通道延迟可达 2 分钟）
+    // 轮询收码（排除旧码），总窗口 5 分钟；90 秒未到自动重发（最多 3 次发送）
     const deadline = Date.now() + 300_000;
     let code: string | null = null;
     let staleSkipped = false;
+    let sends = 1;
+    let lastSendAt = Date.now();
     while (Date.now() < deadline) {
       const sms = await smsService.getSms(phone, config.lubanSmsKeyword).catch(() => null);
       if (sms) {
@@ -402,9 +408,15 @@ async function twofaSmsLogin(page: Page, phone: string, flow: FlowState): Promis
           break;
         }
       }
+      if (sends < 3 && Date.now() - lastSendAt > 90_000) {
+        log(flow, `⏳ 90 秒未收到短信，自动重发（第 ${sends + 1}/3 次）...`);
+        await clickSend();
+        sends++;
+        lastSendAt = Date.now();
+      }
       await sleep(5000);
     }
-    if (!code) throw new Error('5 分钟内未收到短信验证码');
+    if (!code) throw new Error('5 分钟内未收到短信验证码（已自动重发 2 次）');
     log(flow, `收到验证码 ${code}`);
 
     // 等码耗时可能超过 2 分钟——页面可能已自行跳转或刷新，先检查
