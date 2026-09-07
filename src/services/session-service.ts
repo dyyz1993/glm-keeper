@@ -3,6 +3,7 @@ import path from 'path';
 import { chromium, type Page, type BrowserContext } from 'playwright-core';
 import { config } from '../config.js';
 import { accountStore } from './account-store.js';
+import { smsService } from './sms-service.js';
 import { oplog } from './oplog.js';
 import type { Account, FlowState } from '../types.js';
 
@@ -15,6 +16,7 @@ export const SEL = {
   accountUserInput: ['input[placeholder="请输入用户名/邮箱/手机号"]'],
   accountPwdInput: ['input[placeholder="请输入密码"]'],
   sendBtn: ['button.get-verifcode', 'button:has-text("获取验证码")'],
+  codeInput: ['input[placeholder="请输入验证码"]', 'input[placeholder*="验证码"]'],
   loginBtn: ['button.login-btn:visible', 'button.login-btn', 'button:has-text("登录")'],
   /** 腾讯防水墙滑块弹窗根节点（关闭时离屏隐藏） */
   captcha: ['.tencent-captcha-dy__content', 'iframe[src*="captcha"]'],
@@ -326,40 +328,77 @@ export async function passwordLogin(
  * 注意：验证码到用户手机（实号），不走 LubanSMS。
  */
 async function twofaSmsLogin(page: Page, phone: string, flow: FlowState): Promise<void> {
-  const phoneTab = ['.el-tabs__item:has-text("手机号登录")', 'text=手机号登录'];
+  // LubanSMS 重新占用该号码（收短信的前提）
+  await smsService.reAcquire(phone);
+  log(flow, `已通过 LubanSMS 重新占用号码 ${phone}`);
   try {
-    await clickFirst(page, phoneTab, '「手机号登录」tab');
-    await sleep(800);
-  } catch {
-    // 界面可能已在手机号 tab
-  }
-  const inp = await mustFindInput(page, SEL.phoneInput, '手机号输入框');
-  await inp.fill('');
-  await inp.fill(phone);
-  // 勾协议（若在且未勾）
-  const agree = page.locator('.el-checkbox').first();
-  if ((await agree.count()) > 0) {
-    const checked = await agree.evaluate((el) => el.classList.contains('is-checked')).catch(() => false);
-    if (!checked) await agree.click({ timeout: 3000 }).catch(() => {});
-  }
-  step(flow, '2fa-send', `发送短信验证码到 ${phone}...`);
-  await ensureNoCaptcha(page, flow);
-  const sendBtn = await mustFindClickable(page, SEL.sendBtn, '「获取验证码」按钮');
-  await sendBtn.click({ timeout: 10_000 });
-  await waitForCaptchaOptional(page, flow);
-  log(flow, `📲 验证码已发送到 ${phone}，等待人工在浏览器窗口填入（最长 5 分钟）...`);
-  step(flow, '2fa-wait-code', `⏳ 请查收 ${phone} 的短信并填入验证码（填完自动继续）`);
+    // 快照当前收件箱里可能残留的旧验证码
+    const staleSms = await smsService.getSms(phone, config.lubanSmsKeyword).catch(() => null);
+    const stale = staleSms ? extractCode(staleSms) : null;
+    if (stale) log(flow, `快照到历史验证码 ${stale}，收到新码前将忽略`);
 
-  const deadline = Date.now() + 5 * 60_000;
-  while (Date.now() < deadline) {
-    await sleep(3000);
-    if (!page.url().includes('/login')) {
-      log(flow, '✅ 短信验证登录成功');
-      return;
-    }
+    step(flow, '2fa-send', `点击「获取验证码」发送短信到 ${phone}...`);
     await ensureNoCaptcha(page, flow);
+    const sendBtn = await mustFindClickable(page, SEL.sendBtn, '「获取验证码」按钮');
+    await sendBtn.click({ timeout: 10_000 });
+    await waitForCaptchaOptional(page, flow);
+    log(flow, `📲 验证码已发送到 ${phone}，开始通过 LubanSMS 自动接收...`);
+
+    // 轮询 LubanSMS 收码（排除旧码），最长 3 分钟
+    const deadline = Date.now() + 180_000;
+    let code: string | null = null;
+    let staleSkipped = false;
+    while (Date.now() < deadline) {
+      const sms = await smsService.getSms(phone, config.lubanSmsKeyword).catch(() => null);
+      if (sms) {
+        const c = extractCode(sms);
+        if (c && stale && c === stale) {
+          if (!staleSkipped) {
+            staleSkipped = true;
+            log(flow, `收到历史短信（旧码 ${c}），忽略，继续等新码...`);
+          }
+        } else {
+          log(flow, `收到短信: ${sms}`);
+          code = c;
+          break;
+        }
+      }
+      await sleep(5000);
+    }
+    if (!code) throw new Error('3 分钟内未收到短信验证码');
+    log(flow, `收到验证码 ${code}`);
+
+    // 自动填码并登录
+    step(flow, '2fa-fill', '填入验证码并登录...');
+    const codeInput = await mustFindInput(page, SEL.codeInput, '验证码输入框');
+    await codeInput.fill('');
+    await codeInput.fill(code);
+    await ensureNoCaptcha(page, flow);
+    const loginBtn = await mustFindClickable(page, SEL.loginBtn, '「登录」按钮');
+    await loginBtn.click({ timeout: 10_000 });
+    await waitForCaptchaOptional(page, flow);
+
+    const deadline2 = Date.now() + config.keeper.loginTimeoutMs;
+    while (Date.now() < deadline2) {
+      await sleep(1500);
+      if (!page.url().includes('/login')) {
+        log(flow, '✅ 短信验证登录成功');
+        return;
+      }
+    }
+    throw new Error('验证码登录后未跳转');
+  } finally {
+    await smsService.release(phone).catch(() => {});
+    log(flow, `已释放号码 ${phone}`);
   }
-  throw new Error('等待人工填入短信验证码超时（5 分钟）');
+}
+
+/** 从短信文本提取验证码（4-8 位数字，优先 6 位） */
+function extractCode(sms: string): string | null {
+  const m6 = sms.match(/\D(\d{6})\D/) || sms.match(/^(\d{6})$/) || sms.match(/(\d{6})/);
+  if (m6) return m6[1];
+  const m = sms.match(/(\d{4,8})/);
+  return m ? m[1] : null;
 }
 
 export { log, step, sleep };

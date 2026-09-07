@@ -26,6 +26,10 @@ export const config = {
     tokenCookieDomain: '.bigmodel.cn',
   },
 
+  /** LubanSMS（2FA 短信验证码自动接收；key 从 browser-manager/agents.md 或 env 读取） */
+  lubanBase: process.env.LUBAN_BASE || 'https://lubansms.com/v2/api',
+  lubanSmsKeyword: process.env.LUBAN_SMS_KEYWORD || '智谱',
+
   keeper: {
     /** 保活周期：3 天重登一次（token 自然寿命 7 天，2 倍余量） */
     keepAliveDays: Number(process.env.KEEP_ALIVE_DAYS) || 3,
