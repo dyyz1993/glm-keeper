@@ -34,11 +34,21 @@ function apikey(): string {
 
 async function call<T>(endpoint: string, params: Record<string, string>): Promise<T> {
   const qs = new URLSearchParams({ apikey: apikey(), ...params });
-  const res = await fetch(`${config.lubanBase}/${endpoint}?${qs.toString()}`, {
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!res.ok) throw new Error(`LubanSMS HTTP ${res.status}`);
-  return (await res.json()) as T;
+  let lastErr: Error | null = null;
+  for (let i = 1; i <= 3; i++) {
+    try {
+      const res = await fetch(`${config.lubanBase}/${endpoint}?${qs.toString()}`, {
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (!res.ok) throw new Error(`LubanSMS HTTP ${res.status}`);
+      return (await res.json()) as T;
+    } catch (err) {
+      lastErr = err as Error;
+      if (String(lastErr.message).includes('LubanSMS')) throw lastErr; // 业务错误不重试
+      await new Promise((r) => setTimeout(r, 2000 * i)); // 网络错误重试
+    }
+  }
+  throw lastErr ?? new Error('LubanSMS 请求失败');
 }
 
 export const smsService = {

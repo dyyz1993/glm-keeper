@@ -303,18 +303,17 @@ export async function passwordLogin(
       log(flow, '✅ 登录成功');
       return;
     }
-    // 检测双重认证二次验证拦截（密码对但要求短信二次验证）
-    const hit2fa = await page
-      .evaluate(() => {
-        const t = document.body.innerText || '';
-        return /双重认证|二次验证|安全验证/.test(t);
-      })
+    // 触发条件（用户规则）：登录后表单出现「获取验证码」按钮 = 2FA 步骤，立即点击它
+    const verifBtnVisible = await page
+      .locator('button.get-verifcode')
+      .first()
+      .isVisible()
       .catch(() => false);
-    if (hit2fa) {
+    if (verifBtnVisible) {
       if (!phone) {
-        throw new Error('被双重认证拦截且未提供手机号，无法短信验证——请补录手机号后重跑');
+        throw new Error('2FA 需要短信验证码但账号无手机号——请补录手机号后重跑');
       }
-      log(flow, '🔒 密码通过但被双重认证拦截，转入短信验证登录（等待人工填验证码）...');
+      log(flow, '🔒 检测到「获取验证码」按钮（2FA 表单），自动点击并收取短信...');
       return await twofaSmsLogin(page, phone, flow);
     }
   }
@@ -328,9 +327,19 @@ export async function passwordLogin(
  * 注意：验证码到用户手机（实号），不走 LubanSMS。
  */
 async function twofaSmsLogin(page: Page, phone: string, flow: FlowState): Promise<void> {
-  // LubanSMS 重新占用该号码（收短信的前提）
-  await smsService.reAcquire(phone);
-  log(flow, `已通过 LubanSMS 重新占用号码 ${phone}`);
+  // LubanSMS 重新占用该号码（收短信的前提；网络抖动重试 2 次）
+  let acquired = false;
+  for (let i = 1; i <= 3 && !acquired; i++) {
+    try {
+      await smsService.reAcquire(phone);
+      acquired = true;
+      log(flow, `已通过 LubanSMS 重新占用号码 ${phone}`);
+    } catch (err) {
+      log(flow, `占用号码第 ${i} 次失败: ${(err as Error).message}`);
+      await sleep(3000);
+    }
+  }
+  if (!acquired) throw new Error('LubanSMS 占用号码连续失败（网络/平台异常）');
   try {
     // 快照当前收件箱里可能残留的旧验证码
     const staleSms = await smsService.getSms(phone, config.lubanSmsKeyword).catch(() => null);
@@ -368,9 +377,9 @@ async function twofaSmsLogin(page: Page, phone: string, flow: FlowState): Promis
     if (!code) throw new Error('3 分钟内未收到短信验证码');
     log(flow, `收到验证码 ${code}`);
 
-    // 自动填码并登录
+    // 自动填码并登录（以 get-verifcode 按钮为锚点定位验证码输入框）
     step(flow, '2fa-fill', '填入验证码并登录...');
-    const codeInput = await mustFindInput(page, SEL.codeInput, '验证码输入框');
+    const codeInput = await findCodeInputNearButton(page);
     await codeInput.fill('');
     await codeInput.fill(code);
     await ensureNoCaptcha(page, flow);
@@ -391,6 +400,39 @@ async function twofaSmsLogin(page: Page, phone: string, flow: FlowState): Promis
     await smsService.release(phone).catch(() => {});
     log(flow, `已释放号码 ${phone}`);
   }
+}
+
+/** 以「获取验证码」按钮为锚点找验证码输入框（同级/父容器内可见 input），并 dump 表单输入框清单到日志 */
+async function findCodeInputNearButton(page: Page, flow: FlowState) {
+  const direct = page
+    .locator('button.get-verifcode')
+    .first()
+    .locator('xpath=preceding-sibling::input[1] | xpath=following-sibling::input[1] | xpath=parent::*/input[1]');
+  if ((await direct.count()) > 0) return direct.first();
+
+  // 兜底 1：placeholder 包含验证码
+  const byPh = page.locator('input[placeholder*="验证码"]').first();
+  if ((await byPh.count()) > 0 && (await byPh.isVisible().catch(() => false))) return byPh;
+
+  // 兜底 2：登录表单里第一个可见 text input（用户名已填，验证码框是空的那个）
+  const cand = page
+    .locator('.el-form input.el-input__inner:visible')
+    .filter((_: unknown, el: HTMLInputElement) => {
+      const ph = el.getAttribute('placeholder') || '';
+      return !ph.includes('用户名') && !ph.includes('手机') && (el as HTMLInputElement).value === '';
+    })
+    .first();
+  if ((await cand.count()) > 0) return cand;
+
+  const dump = await page
+    .evaluate(() =>
+      [...document.querySelectorAll('input')]
+        .filter((i) => i.offsetWidth || i.offsetHeight)
+        .map((i) => `ph=${i.placeholder || '无'} value=${i.value ? '有值' : '空'}`)
+    )
+    .catch(() => []);
+  log(flow, `未定位到验证码输入框，当前可见输入框: ${JSON.stringify(dump)}`);
+  throw new Error('未定位到验证码输入框');
 }
 
 /** 从短信文本提取验证码（4-8 位数字，优先 6 位） */
