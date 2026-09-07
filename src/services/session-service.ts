@@ -379,7 +379,7 @@ async function twofaSmsLogin(page: Page, phone: string, flow: FlowState): Promis
 
     // 自动填码并登录（以 get-verifcode 按钮为锚点定位验证码输入框）
     step(flow, '2fa-fill', '填入验证码并登录...');
-    const codeInput = await findCodeInputNearButton(page);
+    const codeInput = await findCodeInputNearButton(page, flow);
     await codeInput.fill('');
     await codeInput.fill(code);
     await ensureNoCaptcha(page, flow);
