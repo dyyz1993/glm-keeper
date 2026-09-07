@@ -414,15 +414,14 @@ async function findCodeInputNearButton(page: Page, flow: FlowState) {
   const byPh = page.locator('input[placeholder*="验证码"]').first();
   if ((await byPh.count()) > 0 && (await byPh.isVisible().catch(() => false))) return byPh;
 
-  // 兜底 2：登录表单里第一个可见 text input（用户名已填，验证码框是空的那个）
-  const cand = page
-    .locator('.el-form input.el-input__inner:visible')
-    .filter((_: unknown, el: HTMLInputElement) => {
-      const ph = el.getAttribute('placeholder') || '';
-      return !ph.includes('用户名') && !ph.includes('手机') && (el as HTMLInputElement).value === '';
-    })
-    .first();
-  if ((await cand.count()) > 0) return cand;
+  // 兜底 2：登录表单里第一个可见且为空的 text input（用户名已填，验证码框是空的那个）
+  const inputs = page.locator('.el-form input.el-input__inner:visible');
+  const n = await inputs.count();
+  for (let i = 0; i < n; i++) {
+    const inp = inputs.nth(i);
+    const info = await inp.evaluate((el: HTMLInputElement) => ({ ph: el.placeholder || '', v: el.value }));
+    if (!info.ph.includes('用户名') && !info.ph.includes('手机') && !info.v) return inp;
+  }
 
   const dump = await page
     .evaluate(() =>
