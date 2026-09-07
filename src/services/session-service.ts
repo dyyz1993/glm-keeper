@@ -307,9 +307,16 @@ export async function passwordLogin(
       return;
     }
     // 触发条件（用户规则）：表单出现「获取验证码」按钮 = 2FA 步骤，立即点击它
-    const btn = page.locator('button.get-verifcode').first();
-    const cnt = await btn.count().catch(() => 0);
-    const vis = cnt > 0 ? await btn.isVisible().catch(() => false) : false;
+    // 注意：页面有 2 个该按钮（手机号 tab 一个隐藏、账号 tab 一个可见），必须遍历找可见的
+    const btnsAll = page.locator('button.get-verifcode');
+    const btnCount = await btnsAll.count().catch(() => 0);
+    let vis = false;
+    for (let i = 0; i < btnCount; i++) {
+      if (await btnsAll.nth(i).isVisible().catch(() => false)) {
+        vis = true;
+        break;
+      }
+    }
     if (checks <= 3 || checks % 5 === 0) {
       const bodyHint = await page
         .evaluate(() => ({
@@ -361,13 +368,23 @@ async function twofaSmsLogin(page: Page, phone: string, flow: FlowState): Promis
 
     step(flow, '2fa-send', `点击「获取验证码」发送短信到 ${phone}...`);
     await ensureNoCaptcha(page, flow);
-    const sendBtn = await mustFindClickable(page, SEL.sendBtn, '「获取验证码」按钮');
+    const btnsAll = page.locator('button.get-verifcode');
+    const n2 = await btnsAll.count();
+    let sendBtn: import('playwright-core').Locator | null = null;
+    for (let i = 0; i < n2; i++) {
+      const b = btnsAll.nth(i);
+      if (await b.isVisible().catch(() => false)) {
+        sendBtn = b;
+        break;
+      }
+    }
+    if (!sendBtn) throw new Error('未找到可见的「获取验证码」按钮');
     await sendBtn.click({ timeout: 10_000 });
     await waitForCaptchaOptional(page, flow);
     log(flow, `📲 验证码已发送到 ${phone}，开始通过 LubanSMS 自动接收...`);
 
-    // 轮询 LubanSMS 收码（排除旧码），最长 3 分钟
-    const deadline = Date.now() + 180_000;
+    // 轮询 LubanSMS 收码（排除旧码），最长 5 分钟（老号短信通道延迟可达 2 分钟）
+    const deadline = Date.now() + 300_000;
     let code: string | null = null;
     let staleSkipped = false;
     while (Date.now() < deadline) {
@@ -387,12 +404,28 @@ async function twofaSmsLogin(page: Page, phone: string, flow: FlowState): Promis
       }
       await sleep(5000);
     }
-    if (!code) throw new Error('3 分钟内未收到短信验证码');
+    if (!code) throw new Error('5 分钟内未收到短信验证码');
     log(flow, `收到验证码 ${code}`);
 
+    // 等码耗时可能超过 2 分钟——页面可能已自行跳转或刷新，先检查
+    if (!page.url().includes('/login')) {
+      log(flow, '✅ 收码期间页面已跳转（会话已建立），无需填码');
+      return;
+    }
     // 自动填码并登录（以 get-verifcode 按钮为锚点定位验证码输入框）
     step(flow, '2fa-fill', '填入验证码并登录...');
-    const codeInput = await findCodeInputNearButton(page, flow);
+    let codeInput;
+    try {
+      codeInput = await findCodeInputNearButton(page, flow);
+    } catch (err) {
+      // 上下文可能已销毁——再查一次是否已跳转
+      const url = page.url().catch?.() ?? page.url();
+      if (!String(url).includes('/login')) {
+        log(flow, '✅ 定位失败但页面已跳转，视为登录成功');
+        return;
+      }
+      throw err;
+    }
     await codeInput.fill('');
     await codeInput.fill(code);
     await ensureNoCaptcha(page, flow);
@@ -417,11 +450,14 @@ async function twofaSmsLogin(page: Page, phone: string, flow: FlowState): Promis
 
 /** 以「获取验证码」按钮为锚点找验证码输入框（同级/父容器内可见 input），并 dump 表单输入框清单到日志 */
 async function findCodeInputNearButton(page: Page, flow: FlowState) {
-  const direct = page
-    .locator('button.get-verifcode')
-    .first()
-    .locator('xpath=preceding-sibling::input[1] | xpath=following-sibling::input[1] | xpath=parent::*/input[1]');
-  if ((await direct.count()) > 0) return direct.first();
+  const btnsAll = page.locator('button.get-verifcode');
+  const bn = await btnsAll.count();
+  for (let i = 0; i < bn; i++) {
+    const b = btnsAll.nth(i);
+    if (!(await b.isVisible().catch(() => false))) continue;
+    const direct = b.locator('xpath=preceding-sibling::input[1] | xpath=following-sibling::input[1] | xpath=parent::*//input[1]');
+    if ((await direct.count()) > 0) return direct.first();
+  }
 
   // 兜底 1：placeholder 包含验证码
   const byPh = page.locator('input[placeholder*="验证码"]').first();
