@@ -296,20 +296,33 @@ export async function passwordLogin(
   await btn.click({ timeout: 10_000 });
   await waitForCaptchaOptional(page, flow);
 
-  const deadline = Date.now() + config.keeper.loginTimeoutMs;
+  log(flow, '开始等待登录结果（检测 2FA 验证码按钮/页面跳转）...');
+  const deadline = Date.now() + 60_000;
+  let checks = 0;
   while (Date.now() < deadline) {
-    await sleep(1500);
+    await sleep(2000);
+    checks++;
     if (!page.url().includes('/login')) {
-      log(flow, '✅ 登录成功');
+      log(flow, '✅ 登录成功（已跳转）');
       return;
     }
-    // 触发条件（用户规则）：登录后表单出现「获取验证码」按钮 = 2FA 步骤，立即点击它
-    const verifBtnVisible = await page
-      .locator('button.get-verifcode')
-      .first()
-      .isVisible()
-      .catch(() => false);
-    if (verifBtnVisible) {
+    // 触发条件（用户规则）：表单出现「获取验证码」按钮 = 2FA 步骤，立即点击它
+    const btn = page.locator('button.get-verifcode').first();
+    const cnt = await btn.count().catch(() => 0);
+    const vis = cnt > 0 ? await btn.isVisible().catch(() => false) : false;
+    if (checks <= 3 || checks % 5 === 0) {
+      const bodyHint = await page
+        .evaluate(() => ({
+          codeInputs: [...document.querySelectorAll('input')]
+            .filter((i) => i.offsetWidth)
+            .map((i) => i.placeholder || '无ph')
+            .join(','),
+          verifBtns: document.querySelectorAll('button.get-verifcode').length,
+        }))
+        .catch(() => ({ codeInputs: 'eval失败', verifBtns: -1 }));
+      log(flow, `检测#${checks}: url=${page.url().slice(-20)} 验证码框[${bodyHint.codeInputs}] 获取按钮数=${bodyHint.verifBtns} visible=${vis}`);
+    }
+    if (vis) {
       if (!phone) {
         throw new Error('2FA 需要短信验证码但账号无手机号——请补录手机号后重跑');
       }
@@ -317,7 +330,7 @@ export async function passwordLogin(
       return await twofaSmsLogin(page, phone, flow);
     }
   }
-  throw new Error('登录后未跳转（密码错误或被风控拦截）');
+  throw new Error('登录后未跳转（60s 内未出现验证码按钮也未跳转）');
 }
 
 /**
